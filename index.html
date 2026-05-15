@@ -305,6 +305,12 @@
     .export-bar { display: flex; gap: 6px; }
     .export-btn { padding: 5px 10px; background: #0f1a2e; border: 1px solid #1e3a5f; border-radius: 4px; cursor: pointer; color: #8899aa; font-size: 10px; transition: all 0.2s; }
     .export-btn:hover { border-color: #f0883e; color: #f0883e; }
+
+    /* 坐标轴互换 */
+    .swap-bar { display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+    .swap-btn { padding: 5px 3px; background: #0f1a2e; border: 1px solid #1e3a5f; border-radius: 4px; cursor: pointer; color: #8899aa; font-size: 9px; text-align: center; transition: all 0.2s; }
+    .swap-btn:hover { border-color: #f0883e; color: #f0883e; }
+    .swap-btn.active-swap { border-color: #f0883e; background: rgba(240,136,62,0.15); color: #f0883e; }
   </style>
 </head>
 <body>
@@ -360,6 +366,24 @@
           <button class="view-btn" data-view="top">⬇ 俯</button>
           <button class="view-btn" data-view="isometric">⟳ 等轴</button>
           <button class="view-btn" data-view="reset">🔄 重置</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="form-label">平面视角切换</div>
+        <div class="view-bar">
+          <button class="view-btn" data-view="xy-plane">🗖 XY 平面</button>
+          <button class="view-btn" data-view="xz-plane">🗗 XZ 平面</button>
+          <button class="view-btn" data-view="yz-plane">🗕 YZ 平面</button>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <div class="form-label">坐标轴互换</div>
+        <div class="swap-bar">
+          <button class="swap-btn" data-swap="xy">交换 X↔Y</button>
+          <button class="swap-btn" data-swap="xz">交换 X↔Z</button>
+          <button class="swap-btn" data-swap="yz">交换 Y↔Z</button>
         </div>
       </div>
 
@@ -426,6 +450,10 @@
         - 左键拖拽旋转 | 滚轮缩放 | 右键平移<br>
         - 点"工具 + 点击场景中的点 → 拖拽手柄<br>
         - 点"工具 + 双击空白处 → 吸附网格创建点<br><br>
+
+        <b>🔲 视角切换</b><br>
+        - 正/侧/俯/等轴 + XY/XZ/YZ 平面视角<br>
+        - 坐标轴互换：X↔Y / X↔Z / Y↔Z 实时更新<br><br>
 
         <b>🔧 创建对象</b><br>
         - 选工具 → 点右侧点列表依次选点<br>
@@ -640,7 +668,34 @@
     scene.add(axisY);
     scene.add(axisZ);
 
-    // 5.3 原点白色实心球 (半径 0.2)
+    // 5.3 轴末端CSS2D文本标签（始终面向相机）
+    function createAxisLabel(text, color, x, y, z) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      div.style.color = color;
+      div.style.fontSize = '18px';
+      div.style.fontWeight = 'bold';
+      div.style.textShadow = '0 0 8px rgba(0,0,0,0.9)';
+      div.style.pointerEvents = 'none';
+      div.style.userSelect = 'none';
+      const label = new CSS2DObject(div);
+      label.position.set(x, y, z);
+      label.name = 'axis-label';
+      return label;
+    }
+
+    // X轴标签（红）位于 (16, 0, 0)，略超出轴端
+    const axisLabelX = createAxisLabel('X 轴', '#ff0000', 16, 0, 0);
+    // Y轴标签（绿）位于 (0, 16, 0)
+    const axisLabelY = createAxisLabel('Y 轴', '#00ff00', 0, 16, 0);
+    // Z轴标签（蓝）位于 (0, 0, 16)
+    const axisLabelZ = createAxisLabel('Z 轴', '#0000ff', 0, 0, 16);
+
+    scene.add(axisLabelX);
+    scene.add(axisLabelY);
+    scene.add(axisLabelZ);
+
+    // 5.4 原点白色实心球 (半径 0.2)
     const originGeo = new THREE.SphereGeometry(0.2, 16, 16);
     const originMat = new THREE.MeshBasicMaterial({ color: '#ffffff' });
     const originSphere = new THREE.Mesh(originGeo, originMat);
@@ -2384,7 +2439,10 @@
       side:      { pos: [30, 0, 0], target: [0, 0, 0] },
       top:       { pos: [0, 30, 0.01], target: [0, 0, 0] },
       isometric: { pos: [15, 15, 15], target: [0, 0, 0] },
-      reset:     { pos: [15, 15, 15], target: [0, 0, 0] }
+      reset:     { pos: [15, 15, 15], target: [0, 0, 0] },
+      'xy-plane': { pos: [0, 0, 28], target: [0, 0, 0] },
+      'xz-plane': { pos: [0, 28, 0.01], target: [0, 0, 0] },
+      'yz-plane': { pos: [28, 0, 0], target: [0, 0, 0] }
     };
 
     let viewAnimating = false;
@@ -2432,6 +2490,7 @@
 
     const allGrids = [gridXY, gridXZ, gridYZ];
      const allAxes = [axisX, axisY, axisZ];
+    const allAxisLabels = [axisLabelX, axisLabelY, axisLabelZ];
 
     function toggleVisibility(key) {
       const btn = document.querySelector(`.toggle-btn[data-toggle="${key}"]`);
@@ -2446,7 +2505,7 @@
       }
       const show = btn.classList.contains('active');
 
-      if (key === 'axes') allAxes.forEach(a => { a.visible = show; });
+      if (key === 'axes') { allAxes.forEach(a => { a.visible = show; }); allAxisLabels.forEach(l => { l.visible = show; }); }
       if (key === 'grids') allGrids.forEach(g => { g.visible = show; });
       if (key === 'labels') {
         labelRenderer.domElement.style.display = show ? '' : 'none';
@@ -2455,6 +2514,181 @@
 
     document.querySelectorAll('.toggle-btn[data-toggle]').forEach(btn => {
       btn.addEventListener('click', () => toggleVisibility(btn.dataset.toggle));
+    });
+
+    /* ================================================================
+     * 10b. 坐标轴互换
+     * ================================================================ */
+
+    let currentSwap = 'none'; // 'none' | 'xy' | 'xz' | 'yz'
+
+    function performAxisSwap(swap) {
+      if (swap === currentSwap) {
+        currentSwap = 'none';
+        doAxisSwap(swap);
+        flashUndo('↩ 坐标轴已恢复默认');
+      } else {
+        if (currentSwap !== 'none') doAxisSwap(currentSwap);
+        currentSwap = swap;
+        doAxisSwap(swap);
+        flashUndo(`↔ 坐标轴已交换: ${swap === 'xy' ? 'X↔Y' : swap === 'xz' ? 'X↔Z' : 'Y↔Z'}`);
+      }
+
+      updatePointList();
+      updateAlgebraPanel();
+      updateGeometryList();
+    }
+
+    function doAxisSwap(swap) {
+      // permutation
+      const perm = { x: 0, y: 1, z: 2 };
+      if (swap === 'xy') { perm.x = 1; perm.y = 0; perm.z = 2; }
+      else if (swap === 'xz') { perm.x = 2; perm.y = 1; perm.z = 0; }
+      else if (swap === 'yz') { perm.x = 0; perm.y = 2; perm.z = 1; }
+
+      // 轴标签位置互换
+      const labels = [axisLabelX, axisLabelY, axisLabelZ];
+      const oldPos = labels.map(l => l.position.clone());
+      const oldText = labels.map(l => l.element.textContent);
+      labels.forEach((l, i) => {
+        l.position.copy(oldPos[perm[['x','y','z'][i]]]);
+        l.element.textContent = oldText[perm[['x','y','z'][i]]];
+      });
+
+      // 更新所有点的坐标
+      points.forEach(pt => {
+        const coords = [pt.x, pt.y, pt.z];
+        pt.x = coords[perm.x];
+        pt.y = coords[perm.y];
+        pt.z = coords[perm.z];
+      });
+
+      // 更新场景中所有点mesh位置
+      points.forEach(pt => {
+        if (pt.mesh) pt.mesh.position.set(pt.x, pt.y, pt.z);
+      });
+
+      // 更新coordLabelMap
+      const newMap = new Map();
+      for (const [key, entry] of coordLabelMap) {
+        const ids = Array.from(entry.pointIds);
+        for (const id of ids) {
+          const pt = points.find(p => p.id === id);
+          if (!pt) continue;
+          const newKey = coordKey(pt.x, pt.y, pt.z);
+          if (!newMap.has(newKey)) {
+            newMap.set(newKey, { label: entry.label, pointIds: new Set() });
+            entry.label.position.set(pt.x, pt.y + 0.5, pt.z);
+          }
+          newMap.get(newKey).pointIds.add(id);
+        }
+      }
+      coordLabelMap.clear();
+      for (const [k, v] of newMap) coordLabelMap.set(k, v);
+
+      // 更新所有标签文字
+      for (const [key, entry] of coordLabelMap) rebuildCoordLabel(key);
+
+      // 更新几何体params
+      geometryObjects.forEach(g => {
+        if (!g.params) return;
+        const p = g.params;
+        const items = ['centerX','centerY','centerZ','bx','by','bz','tx','ty','tz','ax','ay','az','x','y','z','sx','sy','sz','radius'];
+        if (p.centerX !== undefined) {
+          const old = [p.centerX, p.centerY, p.centerZ, p.bx, p.by, p.bz, p.tx, p.ty, p.tz, p.ax, p.ay, p.az, p.sx, p.sy, p.sz, p.radius];
+          const orig = {
+            centerX: p.centerX, centerY: p.centerY, centerZ: p.centerZ,
+            bx: p.bx, by: p.by, bz: p.bz,
+            tx: p.tx, ty: p.ty, tz: p.tz,
+            ax: p.ax, ay: p.ay, az: p.az,
+            sx: p.sx, sy: p.sy, sz: p.sz
+          };
+          const c0 = [orig.centerX, orig.centerY, orig.centerZ];
+          p.centerX = c0[perm.x]; p.centerY = c0[perm.y]; p.centerZ = c0[perm.z];
+          if (orig.sx !== undefined) {
+            const s0 = [orig.sx, orig.sy, orig.sz];
+            p.sx = s0[perm.x]; p.sy = s0[perm.y]; p.sz = s0[perm.z];
+          }
+          if (orig.bx !== undefined) {
+            const b0 = [orig.bx, orig.by, orig.bz];
+            p.bx = b0[perm.x]; p.by = b0[perm.y]; p.bz = b0[perm.z];
+          }
+          if (orig.tx !== undefined) {
+            const t0 = [orig.tx, orig.ty, orig.tz];
+            p.tx = t0[perm.x]; p.ty = t0[perm.y]; p.tz = t0[perm.z];
+          }
+          if (orig.ax !== undefined) {
+            const a0 = [orig.ax, orig.ay, orig.az];
+            p.ax = a0[perm.x]; p.ay = a0[perm.y]; p.az = a0[perm.z];
+          }
+        }
+        if (Array.isArray(p) && p.length >= 3) {
+          // tetrahedron vertex array
+          p.forEach(v => {
+            const c = [v.x, v.y, v.z];
+            v.x = c[perm.x]; v.y = c[perm.y]; v.z = c[perm.z];
+          });
+        }
+      });
+
+      // 重建所有几何体 + 线面
+      const geoCopy = geometryObjects.map(g => ({
+        id: g.id, type: g.type, pointIds: [...g.pointIds],
+        params: g.params ? JSON.parse(JSON.stringify(g.params)) : null,
+        displayMode: g.displayMode || 'both', isSolid: g.isSolid || false
+      }));
+      clearAllGeosSilent();
+      const prevTool = currentTool;
+      geoCopy.forEach(geoData => {
+        const ptObjs = geoData.pointIds.map(pid => points.find(p => p.id === pid)).filter(Boolean);
+        if (ptObjs.length === 0) return;
+        currentTool = geoData.type;
+        const prevSel = selectedForGeometry;
+        selectedForGeometry = ptObjs.map(p => p.id);
+        const isSolid = ['cube','sphere','cylinder','cone','tetrahedron'].includes(geoData.type);
+        const isLine = ['segment','line','ray'].includes(geoData.type);
+        const isFace = ['triangle','quad','polygon'].includes(geoData.type);
+        if (isLine && ptObjs.length === 2) createLineObj(geoData.type, ptObjs[0], ptObjs[1]);
+        else if (isFace) createFaceObj(geoData.type, ptObjs);
+        else if (isSolid) {
+          createGeometryFromSelected(geoData.params?.radius || null);
+          if (geometryObjects.length > 0) {
+            const lastGeo = geometryObjects[geometryObjects.length - 1];
+            lastGeo.displayMode = geoData.displayMode;
+            if (geoData.isSolid) setDisplayMode(lastGeo.id, geoData.displayMode);
+          }
+        }
+        currentTool = prevTool;
+        selectedForGeometry = prevSel;
+      });
+      currentTool = prevTool;
+    }
+
+    function clearAllGeosSilent() {
+      geometryObjects.forEach(g => {
+        scene.remove(g.group);
+        g.group.traverse(child => {
+          if (child.material) child.material.dispose();
+          if (child.geometry && !child.geometry._shared) child.geometry.dispose();
+        });
+      });
+      geometryObjects.length = 0;
+      selectedGeoId = null;
+      selectedForGeometry = [];
+    }
+
+    // 交换绑定
+    document.querySelectorAll('.swap-btn').forEach(btn => {
+      btn.addEventListener('click', () => {
+        const swap = btn.dataset.swap;
+        performAxisSwap(swap);
+        // 高亮当前活动互换
+        document.querySelectorAll('.swap-btn').forEach(b => b.classList.remove('active-swap'));
+        if (currentSwap !== 'none') {
+          const activeBtn = document.querySelector(`.swap-btn[data-swap="${currentSwap}"]`);
+          if (activeBtn) activeBtn.classList.add('active-swap');
+        }
+      });
     });
 
     /* ================================================================
