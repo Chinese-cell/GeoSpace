@@ -11,7 +11,8 @@
     /* 主布局：3D画布 + 右侧面板 */
     #app { display: flex; flex-direction: column; width: 100%; height: 100%; }
     #main-row { display: flex; flex: 1; overflow: hidden; }
-    #canvas-container { flex: 1; height: 100%; position: relative; }
+    #canvas-container { flex: 1; height: 100%; position: relative; overflow: hidden; }
+    #canvas-container canvas { position: absolute; top: 0; left: 0; width: 100%; height: 100%; }
 
     /* CSS2D 标签容器，覆盖在 canvas 上方 */
     #label-renderer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 10; }
@@ -172,7 +173,7 @@
 
     /* 几何体工具行 */
     .solid-tool-bar {
-      display: grid; grid-template-columns: repeat(5, 1fr); gap: 4px;
+      display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px;
     }
     .solid-tool-btn {
       padding: 6px 2px; background: #0f1a2e; border: 1px solid #1e3a5f;
@@ -332,6 +333,20 @@
       display: flex; align-items: center; justify-content: center; transition: all 0.15s; line-height: 1;
     }
     .file-tab-new:hover { border-color: #58a6ff; background: #132038; }
+
+    /* 右键菜单 */
+    #context-menu { position: fixed; z-index: 9999; min-width: 160px; background: #16213e; border: 1px solid #30363d; border-radius: 6px; padding: 4px 0; display: none; box-shadow: 0 8px 24px rgba(0,0,0,0.4); }
+    .ctx-item { padding: 8px 16px; font-size: 12px; color: #e0e0e0; cursor: pointer; white-space: nowrap; transition: background 0.15s; }
+    .ctx-item:hover { background: #1e3a5f; }
+    .ctx-divider { height: 1px; background: #30363d; margin: 4px 0; }
+    .ctx-item.danger { color: #e94560; }
+
+    /* 通用按钮类 */
+    .toast-btn { padding: 4px 12px; border: none; border-radius: 4px; font-size: 12px; font-weight: 600; cursor: pointer; }
+    .toast-btn.create { background: #238636; color: #fff; }
+    .toast-btn.create:hover { background: #2ea043; }
+    .toast-btn.ignore { background: #30363d; color: #e0e0e0; }
+    .toast-btn.ignore:hover { background: #484f58; }
   </style>
 </head>
 <body>
@@ -375,7 +390,6 @@
           <button class="solid-tool-btn" data-tool="sphere">⚽ 球体</button>
           <button class="solid-tool-btn" data-tool="cylinder">🥫 圆柱</button>
           <button class="solid-tool-btn" data-tool="cone">🔺 圆锥</button>
-          <button class="solid-tool-btn" data-tool="tetrahedron">🔷 正四面体</button>
         </div>
         <div id="solid-input-row" style="display:none; gap:6px;">
           <input type="number" id="radius-input" placeholder="半径" step="0.1" min="0.1" max="15" value="2">
@@ -415,6 +429,12 @@
       </div>
 
       <div class="form-group">
+        <div class="form-label">智能识别</div>
+        <button id="btn-recognize-selected" class="btn btn-primary">🔍 识别选中的点为几何体</button>
+        <div class="hint-text" style="font-size:10px; margin-top:2px;">按住Ctrl键点击可多选点，选好后点此按钮</div>
+      </div>
+
+      <div class="form-group">
         <div class="form-label">添加点</div>
         <input type="text" id="point-input" placeholder="输入点坐标 (如: A(1,2,3) 或 (1,2,3) 或 1,2,3)">
         <div id="error-msg"></div>
@@ -424,6 +444,10 @@
       <div class="form-group">
         <div class="form-label">已添加的点</div>
         <div id="point-list"></div>
+        <div id="point-multi-actions" style="display:none; gap:4px; margin-top:4px;">
+          <button id="btn-force-create" class="btn-small btn-confirm" style="flex:1;">⚡ 框选创建几何体</button>
+          <button id="btn-clear-multi" class="btn-small btn-cancel">清除选择</button>
+        </div>
       </div>
 
       <div class="form-group">
@@ -448,7 +472,6 @@
         <div class="form-label">导出</div>
         <div class="export-bar">
           <button class="export-btn" id="btn-export-png">🖼️ PNG图片</button>
-          <button class="export-btn" id="btn-export-html">🌐 HTML文件</button>
         </div>
       </div>
 
@@ -466,7 +489,7 @@
         - 选工具 → 点右侧点列表依次选点<br>
         - 线段/直线/射线 = 2点 | 三角形 = 3点<br>
         - 四边形 = 4点 | 多边形 = 3+点 → 点"完成"<br>
-        - 几何体创建完成后可在参数面板调大小<br><br>
+        - 添加4+个孤立点自动识别为凸多面体<br><br>
 
         <b>⌨️ 快捷键</b><br>
         - <kbd>Ctrl+Z</kbd> 撤销 &nbsp; <kbd>Ctrl+Y</kbd> 重做 &nbsp; <kbd>Enter</kbd> 添加点<br>
@@ -478,6 +501,17 @@
     </div>
     </div>
     <div id="undo-toast"></div>
+    <!-- 右键菜单 -->
+    <div id="context-menu">
+      <div class="ctx-item" data-action="hide">👁️ 隐藏/显示</div>
+      <div class="ctx-item" data-action="rename">✏️ 重命名</div>
+      <div class="ctx-item" data-action="copy">📋 复制</div>
+      <div class="ctx-item" data-action="export-coords">📤 导出顶点坐标</div>
+      <div class="ctx-item" data-action="merge">🔗 合并几何体</div>
+      <div class="ctx-item" data-action="decompose">💔 分解几何体</div>
+      <div class="ctx-divider"></div>
+      <div class="ctx-item danger" data-action="delete">🗑 删除</div>
+    </div>
     <div id="status-bar">
       <span id="status-coord">坐标: (-, -, -)</span>
       <span id="status-info">就绪</span>
@@ -517,6 +551,7 @@
       1000
     );
     camera.position.set(15, 15, 15);
+    camera.up.set(0, 0, 1);  // Z轴朝上，符合国内数学教学习惯
     camera.lookAt(0, 0, 0);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -535,6 +570,7 @@
 
     /* ================================================================
      * 2. OrbitControls 轨道控制器
+     *    滚轮缩放仅作用于3D画布区域，不传播到页面
      * ================================================================ */
 
     const controls = new OrbitControls(camera, renderer.domElement);
@@ -546,6 +582,21 @@
       MIDDLE: THREE.MOUSE.DOLLY,
       RIGHT: THREE.MOUSE.PAN
     };
+
+    // 确保滚轮事件限定在3D画布内，阻止传播到文档层级
+    renderer.domElement.addEventListener('wheel', (e) => {
+      e.stopPropagation();
+    }, { passive: false });
+
+    // 阻止UI面板区域的滚轮事件影响3D视图
+    ['algebra-panel', 'panel'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) {
+        el.addEventListener('wheel', (e) => {
+          e.stopPropagation();
+        });
+      }
+    });
 
     controls.zoomSpeed = 1.0;
     controls.rotateSpeed = 0.5;
@@ -776,7 +827,7 @@
       div.style.pointerEvents = 'none';
 
       const label = new CSS2DObject(div);
-      label.position.set(x, y + 0.5, z);
+      label.position.set(x, y, z + 0.5);
       return label;
     }
 
@@ -1041,11 +1092,13 @@
     const TOOL_NAMES = {
       point: '点', segment: '线段', line: '直线', ray: '射线',
       triangle: '三角形', quad: '四边形', polygon: '多边形',
-      cube: '立方体', sphere: '球体', cylinder: '圆柱', cone: '圆锥', tetrahedron: '正四面体'
+      cube: '立方体', sphere: '球体', cylinder: '圆柱', cone: '圆锥',
+      convex: '凸多面体'
     };
     const TOOL_NEEDS = {
       point: 0, segment: 2, line: 2, ray: 2, triangle: 3, quad: 4, polygon: 3,
-      cube: 2, sphere: 1, cylinder: 2, cone: 2, tetrahedron: 4
+      cube: 2, sphere: 1, cylinder: 2, cone: 2,
+      convex: 0
     };
 
     // 颜色
@@ -1075,7 +1128,7 @@
 
     /* ---------- 更新选择提示文字 ---------- */
     function updateSelectionHint() {
-      const isSolid = ['cube','sphere','cylinder','cone','tetrahedron'].includes(currentTool);
+      const isSolid = ['cube','sphere','cylinder','cone','convex'].includes(currentTool);
       const isPolygon = currentTool === 'polygon';
 
       if (currentTool === 'point') {
@@ -1141,7 +1194,7 @@
       selectedForGeometry.push(pointId);
       highlightGeomSelectedPoints();
 
-      const isSolid = ['cube','sphere','cylinder','cone','tetrahedron'].includes(currentTool);
+      const isSolid = ['cube','sphere','cylinder','cone','convex'].includes(currentTool);
       const need = TOOL_NEEDS[currentTool];
 
       if (!isSolid && currentTool !== 'polygon' && selectedForGeometry.length >= need) {
@@ -1215,9 +1268,9 @@
           if (ptObjs.length !== 2) return;
           createSolid('cone', ptObjs, extraParam);
           break;
-        case 'tetrahedron':
-          if (ptObjs.length !== 4) return;
-          createSolid('tetrahedron', ptObjs, extraParam);
+        case 'convex':
+          if (ptObjs.length < 4) return;
+          createSolid('convex', ptObjs, extraParam);
           break;
       }
     }
@@ -1402,10 +1455,9 @@
           solidData = buildConeMesh(group, color, mode, params);
           break;
         }
-        case 'tetrahedron': {
-          const [p1, p2, p3, p4] = ptObjs;
-          params = ptObjs.map(p => ({ x: p.x, y: p.y, z: p.z }));
-          solidData = buildTetrahedronMesh(group, color, mode, params);
+        case 'convex': {
+          params = { vertices: ptObjs.map(p => ({ x: p.x, y: p.y, z: p.z })) };
+          solidData = buildConvexMesh(group, color, mode, params);
           break;
         }
       }
@@ -1566,6 +1618,53 @@
       return { fillMesh, wireframe };
     }
 
+    /* ----- 构建普通凸多面体（顶点集的凸包） ----- */
+    function buildConvexMesh(group, color, mode, params) {
+      const { vertices } = params;
+      const pts = vertices.map(v => new THREE.Vector3(v.x, v.y, v.z));
+
+      if (pts.length < 4) return { fillMesh: null, wireframe: null };
+
+      const hull = computeConvexHull(pts);
+      if (!hull || hull.faces.length < 4) return { fillMesh: null, wireframe: null };
+
+      const geo = new THREE.BufferGeometry();
+      const vertArr = [];
+      const idxArr = [];
+
+      hull.faces.forEach(face => {
+        const tri = triangulateFace(pts, face);
+        tri.forEach(t => {
+          const ti = vertArr.length / 3;
+          vertArr.push(t.a.x, t.a.y, t.a.z);
+          vertArr.push(t.b.x, t.b.y, t.b.z);
+          vertArr.push(t.c.x, t.c.y, t.c.z);
+          idxArr.push(ti, ti + 1, ti + 2);
+        });
+      });
+
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(vertArr), 3));
+      geo.setIndex(idxArr);
+      geo.computeVertexNormals();
+
+      const fillMesh = new THREE.Mesh(geo,
+        new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.3, depthWrite: false, side: THREE.DoubleSide })
+      );
+      fillMesh.name = 'fill';
+      if (mode === 'wireframe') fillMesh.visible = false;
+
+      const wireframe = new THREE.LineSegments(
+        new THREE.EdgesGeometry(geo, 30),
+        new THREE.LineBasicMaterial({ color: GEO_WIRE_COLOR })
+      );
+      wireframe.name = 'wireframe';
+      if (mode === 'solid') wireframe.visible = false;
+
+      group.add(fillMesh);
+      group.add(wireframe);
+      return { fillMesh, wireframe };
+    }
+
     /* ---------- 重建几何体 ---------- */
     function rebuildSolid(id) {
       const g = geometryObjects.find(go => go.id === id);
@@ -1588,11 +1687,7 @@
         case 'sphere': solidData = buildSphereMesh(g.group, color, mode, g.params); break;
         case 'cylinder': solidData = buildCylinderMesh(g.group, color, mode, g.params); break;
         case 'cone': solidData = buildConeMesh(g.group, color, mode, g.params); break;
-        case 'tetrahedron': {
-          const pts = g.params;
-          solidData = buildTetrahedronMesh(g.group, color, mode, pts);
-          break;
-        }
+        case 'convex': solidData = buildConvexMesh(g.group, color, mode, g.params); break;
       }
       g.fillMesh = solidData.fillMesh;
       g.wireframe = solidData.wireframe;
@@ -1646,8 +1741,8 @@
         case 'cone':
           html += sliderRow('半径', 'radius', p.radius || 2, 0.1, 15);
           break;
-        case 'tetrahedron':
-          html += `<div class="param-row"><span class="param-label" style="color:#4a5568;">顶点固定</span></div>`;
+        case 'convex':
+          html += '<div class="param-row"><span class="param-label" style="color:#4a5568;">凸包顶点固定</span></div>';
           break;
       }
       solidParamSlots.innerHTML = html;
@@ -1857,7 +1952,7 @@
         showError(`请先选择${need}个点`);
         return;
       }
-      const isSolid = ['cube','sphere','cylinder','cone','tetrahedron'].includes(currentTool);
+      const isSolid = ['cube','sphere','cylinder','cone','convex'].includes(currentTool);
       if (!isSolid) return;
       const radiusVal = parseFloat(radiusInput.value) || SOLID_PARAM_DEFAULTS.radius;
       createGeometryFromSelected(radiusVal);
@@ -2011,6 +2106,43 @@
       return round2(Math.abs(cross.x*ad.x + cross.y*ad.y + cross.z*ad.z) / 6);
     }
 
+    // 凸多面体体积 - 四面体分解法
+    function calcConvexVolume(vertices) {
+      if (!vertices || vertices.length < 4) return null;
+      const v0 = vertices[0];
+      let totalVol = 0;
+      const hull = computeConvexHull(vertices.map(v => new THREE.Vector3(v.x, v.y, v.z)));
+      if (hull && hull.faces.length >= 4) {
+        hull.faces.forEach(face => {
+          const tris = triangulateFace(vertices.map(v => new THREE.Vector3(v.x, v.y, v.z)), face);
+          tris.forEach(t => {
+            const ab = { x: t.b.x - t.a.x, y: t.b.y - t.a.y, z: t.b.z - t.a.z };
+            const ac = { x: t.c.x - t.a.x, y: t.c.y - t.a.y, z: t.c.z - t.a.z };
+            const cross = { x: ab.y*ac.z - ab.z*ac.y, y: ab.z*ac.x - ab.x*ac.z, z: ab.x*ac.y - ab.y*ac.x };
+            totalVol += Math.abs(cross.x * (v0.x - t.a.x) + cross.y * (v0.y - t.a.y) + cross.z * (v0.z - t.a.z)) / 6;
+          });
+        });
+      }
+      return round2(totalVol);
+    }
+
+    function calcConvexSurfaceArea(vertices) {
+      if (!vertices || vertices.length < 4) return null;
+      const hull = computeConvexHull(vertices.map(v => new THREE.Vector3(v.x, v.y, v.z)));
+      if (!hull || hull.faces.length < 4) return null;
+      let totalArea = 0;
+      hull.faces.forEach(face => {
+        const tris = triangulateFace(vertices.map(v => new THREE.Vector3(v.x, v.y, v.z)), face);
+        tris.forEach(t => {
+          const ab = { x: t.b.x - t.a.x, y: t.b.y - t.a.y, z: t.b.z - t.a.z };
+          const ac = { x: t.c.x - t.a.x, y: t.c.y - t.a.y, z: t.c.z - t.a.z };
+          const cross = { x: ab.y*ac.z - ab.z*ac.y, y: ab.z*ac.x - ab.x*ac.z, z: ab.x*ac.y - ab.y*ac.x };
+          totalArea += 0.5 * Math.sqrt(cross.x*cross.x + cross.y*cross.y + cross.z*cross.z);
+        });
+      });
+      return round2(totalArea);
+    }
+
     /* ---------- 代数表达式生成 ---------- */
     function getAlgebraExpression(g) {
       const ptNames = g.pointIds.map(pid => {
@@ -2067,9 +2199,10 @@
           const vol = calcConeVolume(g.params, g.pointIds);
           return { cat: 'solid', expr: `${nameStr} = 圆锥(${ptNames.join(', ')})`, value: `体积 = ${vol}, r=${round2(g.params.radius||2)}` };
         }
-        case 'tetrahedron': {
-          const vol = calcTetraVolume(g.pointIds);
-          return { cat: 'solid', expr: `${nameStr} = 正四面体(${ptNames.join(', ')})`, value: vol !== null ? `体积 = ${vol}` : null };
+        case 'convex': {
+          const vol = calcConvexVolume(g.params.vertices);
+          const area = calcConvexSurfaceArea(g.params.vertices);
+          return { cat: 'solid', expr: `${nameStr} = ${classifyConvexShape(g.params.vertices)}(${ptNames.join(', ')})`, value: `体积 = ${vol}, 表面积 = ${area}` };
         }
         default: return null;
       }
@@ -2215,9 +2348,9 @@
 
       // 格式: 立方体(A,B)  等等... 使用已选工具逻辑
       // 简化的几何体创建
-      m = s.match(/^\s*(立方体|球体|圆柱|圆锥|正四面体)\(\s*(.+)\s*\)\s*$/);
+      m = s.match(/^\s*(立方体|球体|圆柱|圆锥|凸多面体)\(\s*(.+)\s*\)\s*$/);
       if (m) {
-        const typeMap = { '立方体': 'cube', '球体': 'sphere', '圆柱': 'cylinder', '圆锥': 'cone', '正四面体': 'tetrahedron' };
+        const typeMap = { '立方体': 'cube', '球体': 'sphere', '圆柱': 'cylinder', '圆锥': 'cone', '凸多面体': 'convex' };
         const solidType = typeMap[m[1]];
         const args = m[2].split(',').map(a => a.trim());
         const ptNames = args.filter(a => /^[A-Za-z]/.test(a));
@@ -2306,7 +2439,7 @@
           } else {
             rebuildCoordLabel(newKey);
             if (pt.label) {
-              pt.label.position.set(pt.x, pt.y + 0.5, pt.z);
+              pt.label.position.set(pt.x, pt.y, pt.z + 0.5);
             }
           }
 
@@ -2367,8 +2500,8 @@
               if (pidIndex === 0) { g.params.centerX = pt.x; g.params.centerY = pt.y; g.params.centerZ = pt.z; }
               break;
             }
-            case 'tetrahedron': {
-              g.params[pidIndex] = { x: pt.x, y: pt.y, z: pt.z };
+            case 'convex': {
+              g.params.vertices[pidIndex] = { x: pt.x, y: pt.y, z: pt.z };
               break;
             }
           }
@@ -2437,9 +2570,9 @@
      * ================================================================ */
 
     const viewTargets = {
-      front:     { pos: [0, 0, 30], target: [0, 0, 0] },
+      front:     { pos: [0, 30, 0], target: [0, 0, 0] },
       side:      { pos: [30, 0, 0], target: [0, 0, 0] },
-      top:       { pos: [0, 30, 0.01], target: [0, 0, 0] },
+      top:       { pos: [0, 0.01, 30], target: [0, 0, 0] },
       isometric: { pos: [15, 15, 15], target: [0, 0, 0] },
       reset:     { pos: [15, 15, 15], target: [0, 0, 0] }
     };
@@ -2606,7 +2739,7 @@
             else if (geo.type === 'sphere') result = `球体体积 = ${calcSphereVolume(geo.params)}`;
             else if (geo.type === 'cylinder') result = `圆柱体积 = ${calcCylinderVolume(geo.params, geo.pointIds)}`;
             else if (geo.type === 'cone') result = `圆锥体积 = ${calcConeVolume(geo.params, geo.pointIds)}`;
-            else if (geo.type === 'tetrahedron') { const v = calcTetraVolume(geo.pointIds); result = `正四面体体积 = ${v}`; }
+            else if (geo.type === 'convex') { const v = calcConvexVolume(geo.params.vertices); result = `凸多面体体积 = ${v}`; }
             else result = '选中对象不是几何体';
           }
         }
@@ -2734,7 +2867,7 @@
         const prevSel = selectedForGeometry;
         selectedForGeometry = ptObjs.map(p => p.id);
 
-        const isSolid = ['cube','sphere','cylinder','cone','tetrahedron'].includes(geoData.type);
+        const isSolid = ['cube','sphere','cylinder','cone','convex'].includes(geoData.type);
         const isLine = ['segment','line','ray'].includes(geoData.type);
         const isFace = ['triangle','quad','polygon'].includes(geoData.type);
 
@@ -2939,9 +3072,11 @@
       updateSelectionHint();
 
       const idx = files.length + 1;
+      const userInput = prompt('请输入新文件名称：', `未命名${idx}`);
+      const name = (userInput && userInput.trim()) ? userInput.trim() : `未命名${idx}`;
       const newFile = {
         id: newFileId(),
-        name: `未命名${idx}`,
+        name: name,
         modified: false,
         snap: snapshot(),
         undoStack: [],
@@ -3102,10 +3237,10 @@
       const m = new THREE.Raycaster();
       m.setFromCamera(new THREE.Vector2(0, 0), camera);
       const dir = m.ray.direction;
-      const t = -camera.position.y / dir.y;
+      const t = -camera.position.z / dir.z;
       const wx = camera.position.x + dir.x * t;
-      const wz = camera.position.z + dir.z * t;
-      statusCoord.textContent = `坐标: (${round2(wx)}, 0.00, ${round2(wz)})`;
+      const wy = camera.position.y + dir.y * t;
+      statusCoord.textContent = `坐标: (${round2(wx)}, ${round2(wy)}, 0.00)`;
 
       const sel = selectedPointId ? points.find(p => p.id === selectedPointId) : null;
       const selGeo = selectedGeoId ? geometryObjects.find(g => g.id === selectedGeoId) : null;
@@ -3137,22 +3272,6 @@
     });
 
     /* ---------- 导出HTML ---------- */
-    function buildEmbeddedHTML() {
-      const html = document.documentElement.outerHTML;
-      return html;
-    }
-
-    document.getElementById('btn-export-html').addEventListener('click', () => {
-      const blob = new Blob([buildEmbeddedHTML()], { type: 'text/html;charset=utf-8' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `geogebra3d_${Date.now()}.html`;
-      a.click();
-      URL.revokeObjectURL(url);
-      flashUndo('🌐 HTML已导出');
-    });
-
     /* ---------- 全局错误处理 ---------- */
     window.addEventListener('error', (e) => {
       console.error('捕获全局错误:', e.error);
@@ -3178,23 +3297,470 @@
       controls.update();
       updateViewAnimation();
       updateStatusBar();
-      if (camera.position.y < 0.5) camera.position.y = 0.5;
+      if (camera.position.z < 0.5) camera.position.z = 0.5;
       renderer.render(scene, camera);
       labelRenderer.render(scene, camera);
     }
 
+    /* ================================================================
+     * 17. 凸包算法 + 自动识别引擎 + 右键菜单
+     * ================================================================ */
+
+    function computeConvexHull(pts) {
+      if (!pts || pts.length < 4) return null;
+      const vertices = pts.map(p => new THREE.Vector3(p.x || 0, p.y || 0, p.z || 0));
+      // 找4个不共面的初始点
+      let i0 = 0, i1 = -1, i2 = -1, i3 = -1;
+      for (let i = 1; i < vertices.length; i++) {
+        if (vertices[i].distanceToSquared(vertices[i0]) > 0.0001) { i1 = i; break; }
+      }
+      if (i1 < 0) return null;
+      const v01 = new THREE.Vector3().subVectors(vertices[i1], vertices[i0]);
+      for (let i = 1; i < vertices.length; i++) {
+        if (i === i1) continue;
+        const cross = new THREE.Vector3().crossVectors(v01, new THREE.Vector3().subVectors(vertices[i], vertices[i0]));
+        if (cross.lengthSq() > 0.0001) { i2 = i; break; }
+      }
+      if (i2 < 0) return null;
+      const n0 = new THREE.Vector3().crossVectors(
+        new THREE.Vector3().subVectors(vertices[i2], vertices[i0]),
+        new THREE.Vector3().subVectors(vertices[i1], vertices[i0])
+      );
+      for (let i = 1; i < vertices.length; i++) {
+        if (i === i1 || i === i2) continue;
+        if (Math.abs(new THREE.Vector3().subVectors(vertices[i], vertices[i0]).dot(n0)) > 0.0001) { i3 = i; break; }
+      }
+      if (i3 < 0) return null;
+
+      const center0 = new THREE.Vector3().addVectors(vertices[i0], vertices[i1])
+        .add(vertices[i2]).add(vertices[i3]).multiplyScalar(0.25);
+
+      function makeFace(a, b, c, ref) {
+        const ab = new THREE.Vector3().subVectors(vertices[b], vertices[a]);
+        const ac = new THREE.Vector3().subVectors(vertices[c], vertices[a]);
+        const normal = new THREE.Vector3().crossVectors(ab, ac);
+        const center = new THREE.Vector3().addVectors(vertices[a], vertices[b]).add(vertices[c]).multiplyScalar(1/3);
+        if (new THREE.Vector3().subVectors(ref, center).dot(normal) > 0) {
+          normal.negate();
+          return { a, b: c, c: b, normal: normal.normalize(), center };
+        }
+        return { a, b, c, normal: normal.normalize(), center };
+      }
+
+      const faces = [
+        makeFace(i0, i2, i1, center0),
+        makeFace(i0, i1, i3, center0),
+        makeFace(i0, i3, i2, center0),
+        makeFace(i1, i2, i3, center0)
+      ];
+
+      for (let i = 0; i < vertices.length; i++) {
+        if (i === i0 || i === i1 || i === i2 || i === i3) continue;
+        const pt = vertices[i];
+        const visible = [];
+        faces.forEach((f, fi) => {
+          if (new THREE.Vector3().subVectors(pt, f.center).dot(f.normal) > 0.0001) visible.push(fi);
+        });
+        if (visible.length === 0) continue;
+        const edgeMap = new Map();
+        visible.forEach(fi => {
+          const f = faces[fi];
+          [[f.a, f.b], [f.b, f.c], [f.c, f.a]].forEach(([u, v]) => {
+            const key = Math.min(u, v) + '_' + Math.max(u, v);
+            if (edgeMap.has(key)) edgeMap.delete(key);
+            else edgeMap.set(key, { u, v });
+          });
+        });
+        const newFaces = faces.filter((_, fi) => !visible.includes(fi));
+        edgeMap.forEach(({ u, v }) => {
+          const ab = new THREE.Vector3().subVectors(vertices[v], vertices[u]);
+          const ac = new THREE.Vector3().subVectors(pt, vertices[u]);
+          const normal = new THREE.Vector3().crossVectors(ab, ac);
+          const center = new THREE.Vector3().addVectors(vertices[u], vertices[v]).add(pt).multiplyScalar(1/3);
+          if (normal.dot(new THREE.Vector3().subVectors(center, center0)) < 0) normal.negate();
+          newFaces.push({ a: u, b: v, c: i, normal: normal.normalize(), center });
+        });
+        faces.length = 0; faces.push(...newFaces);
+      }
+
+      return { faces: faces.map(f => [f.a, f.b, f.c]) };
+    }
+
+    function triangulateFace(pts, face) {
+      if (face.length === 3) return [{ a: pts[face[0]], b: pts[face[1]], c: pts[face[2]] }];
+      const tris = [];
+      for (let i = 1; i < face.length - 1; i++)
+        tris.push({ a: pts[face[0]], b: pts[face[i]], c: pts[face[i + 1]] });
+      return tris;
+    }
+
+    function classifyConvexShape(vertices) {
+      const n = vertices.length;
+      const hull = computeConvexHull(vertices.map(v => new THREE.Vector3(v.x, v.y, v.z)));
+      if (!hull) return '凸多面体';
+      const fc = hull.faces.length;
+      if (n === 4 && fc === 4) return '四面体/三棱锥';
+      if (n === 5 && fc === 5) return '四棱锥';
+      if (n === 6 && fc === 5) return '三棱柱';
+      if (n === 8 && fc === 6) return '四棱柱/平行六面体';
+      if (n === 6 && fc === 6) return '五棱锥';
+      if (n === 7 && fc === 7) return '六棱锥';
+      return `凸多面体(${n}顶点,${fc}面)`;
+    }
+
+    // 生成所有组合 C(n,k) 下标数组
+    function combinations(arr, k) {
+      const result = [];
+      const n = arr.length;
+      if (k > n || k <= 0) return result;
+      const idx = Array.from({ length: k }, (_, i) => i);
+      while (true) {
+        result.push(idx.map(i => arr[i]));
+        let p = k - 1;
+        while (p >= 0 && idx[p] === n - k + p) p--;
+        if (p < 0) break;
+        idx[p]++;
+        for (let i = p + 1; i < k; i++) idx[i] = idx[i - 1] + 1;
+      }
+      return result;
+    }
+
+    function arePointsCoplanar3(points) {
+      if (points.length < 4) return true;
+      const [a, b, c, d] = points;
+      const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+      const ac = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
+      const ad = { x: d.x - a.x, y: d.y - a.y, z: d.z - a.z };
+      const cross = {
+        x: ab.y * ac.z - ab.z * ac.y,
+        y: ab.z * ac.x - ab.x * ac.z,
+        z: ab.x * ac.y - ab.y * ac.x
+      };
+      const dot = cross.x * ad.x + cross.y * ad.y + cross.z * ad.z;
+      return Math.abs(dot) < 0.0001;
+    }
+
+    /* 手动识别引擎（用户主动点击按钮触发） */
+    function manualSmartRecognize(pids) {
+      const ptObjs = pids.map(pid => points.find(p => p.id === pid)).filter(Boolean);
+
+      if (ptObjs.length < 3) { showError('请至少选中3个点'); return; }
+
+      const n = ptObjs.length;
+
+      // 3点 → 三角形
+      if (n === 3) {
+        const [a, b, c] = ptObjs;
+        const ab = { x: b.x - a.x, y: b.y - a.y, z: b.z - a.z };
+        const ac = { x: c.x - a.x, y: c.y - a.y, z: c.z - a.z };
+        const cross = { x: ab.y*ac.z - ab.z*ac.y, y: ab.z*ac.x - ab.x*ac.z, z: ab.x*ac.y - ab.y*ac.x };
+        if (cross.x*cross.x + cross.y*cross.y + cross.z*cross.z < 0.0001) {
+          showError('这3个点共线，无法创建三角形'); return;
+        }
+        createFaceObj('triangle', ptObjs);
+        flashUndo('✅ 三角形已创建');
+        updateGeometryList();
+        updateAlgebraPanel();
+        return;
+      }
+
+      // 4点 → 检查共面
+      if (n === 4) {
+        if (arePointsCoplanar3(ptObjs)) {
+          showError('这4个点共面，无法创建四面体'); return;
+        }
+        const hull = computeConvexHull(ptObjs.map(p => new THREE.Vector3(p.x, p.y, p.z)));
+        if (hull && hull.faces.length >= 4) {
+          createSolidManual('四面体/三棱锥', ptObjs);
+          return;
+        }
+        showError('无法识别这4个点的几何体类型'); return;
+      }
+
+      // 5点以上 → 求凸包并根据n分类
+      createSolidManual(classifyConvexShape(ptObjs), ptObjs);
+    }
+
+    function createSolidManual(label, ptObjs) {
+      const prevTool = currentTool;
+      currentTool = 'convex';
+      const prevSel = selectedForGeometry;
+      selectedForGeometry = ptObjs.map(p => p.id);
+      createGeometryFromSelected();
+      currentTool = prevTool;
+      selectedForGeometry = prevSel;
+      updateGeometryList();
+      updateAlgebraPanel();
+      flashUndo('✅ ' + label + '已创建');
+    }
+
+    /* 右键菜单 */
+    const ctxMenu = document.getElementById('context-menu');
+    let ctxTargetGeoId = null;
+
+    ctxMenu.querySelectorAll('.ctx-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const action = item.dataset.action;
+        const geo = geometryObjects.find(g => g.id === ctxTargetGeoId);
+        if (!geo) { ctxMenu.style.display = 'none'; return; }
+
+        switch (action) {
+          case 'delete': deleteGeometry(ctxTargetGeoId); break;
+          case 'hide': {
+            geo.group.visible = !geo.group.visible;
+            geo._hidden = !geo._hidden;
+            break;
+          }
+          case 'rename': {
+            const newName = prompt('输入新名称', geo.id);
+            if (newName) { geo.id = newName; updateGeometryList(); updateAlgebraPanel(); }
+            break;
+          }
+          case 'copy': {
+            const newGeo = JSON.parse(JSON.stringify({
+              type: geo.type, pointIds: [...geo.pointIds],
+              params: geo.params ? JSON.parse(JSON.stringify(geo.params)) : null,
+              displayMode: geo.displayMode || 'both', isSolid: geo.isSolid || false
+            }));
+            const ptObjs = newGeo.pointIds.map(pid => points.find(p => p.id === pid)).filter(Boolean);
+            if (ptObjs.length === newGeo.pointIds.length) {
+              const prevTool = currentTool;
+              currentTool = newGeo.type;
+              const prevSel = selectedForGeometry;
+              selectedForGeometry = ptObjs.map(p => p.id);
+              const rv = newGeo.params?.radius || null;
+              createGeometryFromSelected(rv);
+              currentTool = prevTool;
+              selectedForGeometry = prevSel;
+            }
+            break;
+          }
+          case 'export-coords': {
+            const coords = geo.pointIds.map(pid => {
+              const pt = points.find(p => p.id === pid);
+              return pt ? `${pt.name}(${pt.x},${pt.y},${pt.z})` : '';
+            }).filter(Boolean).join('\\n');
+            alert('顶点坐标:\\n' + coords);
+            break;
+          }
+          case 'merge': {
+            if (confirm('合并选中几何体为组合体？')) {
+              geo._isMerged = true;
+              flashUndo('🔗 几何体已标记为组合');
+            }
+            break;
+          }
+          case 'decompose': {
+            if (confirm('分解几何体为独立点？')) {
+              const pids = [...geo.pointIds];
+              deleteGeometry(ctxTargetGeoId);
+              pids.forEach(pid => {
+                const pt = points.find(p => p.id === pid);
+                if (pt) {
+                  pt.mesh.material.color.set(POINT_COLOR_DEFAULT);
+                  pt.mesh.geometry = pointGeoDefault;
+                }
+              });
+              selectedPointId = null;
+              updatePointList();
+              updateAlgebraPanel();
+              flashUndo('💔 几何体已分解');
+            }
+            break;
+          }
+        }
+        ctxMenu.style.display = 'none';
+      });
+    });
+
+    document.addEventListener('click', () => { ctxMenu.style.display = 'none'; });
+
+    /* 手动识别按钮 */
+    document.getElementById('btn-recognize-selected').addEventListener('click', () => {
+      if (multiSelectedPoints.size >= 3) {
+        const pids = [...multiSelectedPoints];
+        multiSelectedPoints.clear();
+        updateMultiSelectUI();
+        updatePointList();
+        manualSmartRecognize(pids);
+      } else {
+        showError('请先Ctrl+点击至少3个点进行多选');
+      }
+    });
+
+    renderer.domElement.addEventListener('contextmenu', (event) => {
+      event.preventDefault();
+      const mouse = new THREE.Vector2(
+        (event.clientX / window.innerWidth) * 2 - 1,
+        -(event.clientY / window.innerHeight) * 2 + 1
+      );
+      const rc = new THREE.Raycaster();
+      rc.setFromCamera(mouse, camera);
+      const meshes = geometryObjects.flatMap(g => {
+        const targets = [];
+        g.group.traverse(c => { if (c.name === 'fill' || c.name === 'wireframe') targets.push(c); });
+        return targets;
+      });
+      const hits = rc.intersectObjects(meshes);
+      if (hits.length > 0) {
+        for (const g of geometryObjects) {
+          if (g.group.children.includes(hits[0].object) || g.group === hits[0].object.parent) {
+            ctxTargetGeoId = g.id;
+            ctxMenu.style.display = 'block';
+            ctxMenu.style.left = event.clientX + 'px';
+            ctxMenu.style.top = event.clientY + 'px';
+            return;
+          }
+        }
+      }
+      ctxTargetGeoId = null;
+    });
+
+    const _origDeletePoint = deletePoint;
+    deletePoint = function(id) {
+      _origDeletePoint(id);
+    };
+
+    const _origDeleteGeometry2 = deleteGeometry;
+    deleteGeometry = function(id) {
+      _origDeleteGeometry2(id);
+    };
+
+    /* Ctrl+点选 多选点系统 + 框选创建几何体 */
+    let multiSelectedPoints = new Set();
+    const multiActionsBar = document.getElementById('point-multi-actions');
+    const btnForceCreate = document.getElementById('btn-force-create');
+    const btnClearMulti = document.getElementById('btn-clear-multi');
+
+    function updateMultiSelectUI() {
+      multiActionsBar.style.display = multiSelectedPoints.size > 0 ? 'flex' : 'none';
+      const n = multiSelectedPoints.size;
+      if (n >= 3) {
+        btnForceCreate.textContent = '⚡ 创建' + classifyConvexShapeQuick(n) + ' (' + n + '点)';
+        btnForceCreate.style.opacity = '1';
+      } else {
+        btnForceCreate.textContent = '⚡ 框选创建几何体 (需≥3点)';
+        btnForceCreate.style.opacity = '0.5';
+      }
+    }
+
+    function classifyConvexShapeQuick(n) {
+      if (n === 3) return '三角形';
+      if (n === 4) return '四面体';
+      if (n === 5) return '四棱锥';
+      if (n === 6) return '五棱锥/三棱柱';
+      if (n === 7) return '六棱锥';
+      if (n === 8) return '四棱柱';
+      return '凸多面体';
+    }
+
+    function toggleMultiSelectPoint(pid, event) {
+      if (!event.ctrlKey && !event.metaKey) return false;
+      if (multiSelectedPoints.has(pid)) {
+        multiSelectedPoints.delete(pid);
+      } else {
+        multiSelectedPoints.add(pid);
+      }
+      updateMultiSelectUI();
+      updatePointList(); // 刷新高亮
+      return true;
+    }
+
+    btnClearMulti.addEventListener('click', () => {
+      multiSelectedPoints.clear();
+      updateMultiSelectUI();
+      updatePointList();
+    });
+
+    btnForceCreate.addEventListener('click', () => {
+      if (multiSelectedPoints.size < 3) { showError('请Ctrl+点击至少3个点'); return; }
+      const pids = [...multiSelectedPoints];
+      multiSelectedPoints.clear();
+      updateMultiSelectUI();
+      updatePointList();
+      manualSmartRecognize(pids);
+    });
+
+    // 挂钩 updatePointList 以高亮多选点
+    const _origUpdatePointList2 = updatePointList;
+    updatePointList = function() {
+      _origUpdatePointList2();
+      // 追加多选高亮样式
+      pointListEl.querySelectorAll('.point-item').forEach(item => {
+        const deleteBtn = item.querySelector('.point-item-delete');
+        if (!deleteBtn) return;
+        // 提取 pid 通过 click handler 闭包中的 pt.id，这里我们用 data-pid
+        const pid = item.dataset?.pid || null;
+      });
+      // 重新构造时打上 data-pid 标记 + 多选样式（在 _origUpdatePointList2 内部重新 build）
+    };
+
+    // 重写 updatePointList 的构建部分，在 point-item 上加入 data-pid 和 multi-selected 样式
+    // 用更干净的方式：在 _origDeleteGeometry2 之前保存好原始渲染函数
+    const __origRenderPointList = updatePointList;
+    updatePointList = function() {
+      pointListEl.innerHTML = '';
+
+      points.forEach(pt => {
+        const item = document.createElement('div');
+        item.className = 'point-item';
+        item.dataset.pid = pt.id;
+        if (pt.id === selectedPointId) item.classList.add('selected');
+        if (multiSelectedPoints.has(pt.id)) {
+          item.style.borderColor = '#f0883e';
+          item.style.background = 'rgba(240,136,62,0.2)';
+        }
+        if (measureMode && measureSelections.includes(pt.id)) {
+          item.style.borderColor = '#f0883e';
+          item.style.background = 'rgba(240,136,62,0.15)';
+        }
+
+        const nameSpan = document.createElement('span');
+        nameSpan.className = 'point-item-name';
+        nameSpan.textContent = pt.name;
+
+        const coordSpan = document.createElement('span');
+        coordSpan.className = 'point-item-coord';
+        coordSpan.textContent = `(${pt.x}, ${pt.y}, ${pt.z})`;
+
+        const delBtn = document.createElement('button');
+        delBtn.className = 'point-item-delete';
+        delBtn.textContent = '✕';
+        delBtn.addEventListener('click', (e) => {
+          e.stopPropagation();
+          multiSelectedPoints.delete(pt.id);
+          updateMultiSelectUI();
+          deletePoint(pt.id);
+        });
+
+        item.addEventListener('click', (e) => {
+          if (toggleMultiSelectPoint(pt.id, e)) return;
+          handlePointListClick(pt.id);
+        });
+
+        item.appendChild(nameSpan);
+        item.appendChild(coordSpan);
+        item.appendChild(delBtn);
+        pointListEl.appendChild(item);
+      });
+      updateMultiSelectUI();
+      updateAlgebraPanel();
+    };
+
+    /* 多选点系统结束 */
+
     animate();
 
-    console.log('%c🚀 GeoGebra 3D 引擎 v3.2 %c多文件版',
+    console.log('%c🚀 GeoGebra 3D 引擎 v5.0 %c手动识别版',
       'font-size:16px;color:#4cc9f0;', 'font-size:12px;color:#8899aa;');
     console.log('  右手系: X(红) Y(绿) Z(蓝) | 范围 ±15');
     console.log('  🖱️ 左键旋转 | 滚轮缩放 | 右键平移');
     console.log('  ✏️ 点工具+双击=创建点 | 点工具+点击球=拖拽');
     console.log('  ⌨️ Ctrl+Z 撤销 | Ctrl+Y 重做 | Enter 添加');
     console.log('  📏 测量: 距离/角度/面积/体积');
-    console.log('  🖼️ 导出: PNG图片 / HTML独立文件');
+    console.log('  🖼️ 导出: PNG图片');
     console.log('  ➗ 代数输入: A=(1,2,3) 或 AB=线段(A,B)');
-    console.log('  📐 几何体: 立方体/球体/圆柱/圆锥/正四面体');
+    console.log('  📐 几何体: 立方体/球体/圆柱/圆锥 + 点集自动识别凸多面体');
     console.log('  👁️ 显示控制: 坐标轴/网格/标签 开关');
     console.log('  🔲 视角: 正/侧/俯/等轴/重置 动画过渡');
     console.log('  🏷️ 轴标签: X轴(红) Y轴(绿) Z轴(蓝)');
